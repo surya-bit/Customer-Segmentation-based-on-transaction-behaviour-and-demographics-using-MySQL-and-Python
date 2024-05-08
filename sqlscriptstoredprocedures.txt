@@ -1,0 +1,179 @@
+-- 2 . Stored procedure development:
+
+-- Ensure the account_profile table exists before creating the procedure
+CREATE TABLE IF NOT EXISTS account_profile (
+    Customer_ID INT PRIMARY KEY,
+    Card_Avg DECIMAL(10,2),
+    Check_Avg DECIMAL(10,2),
+    Deposit_Avg DECIMAL(10,2),
+    Loan_Payment_Avg DECIMAL(10,2),
+    Transfer_Avg DECIMAL(10,2),
+    Withdrawal_Avg DECIMAL(10,2),
+    Card_Count INT,
+    Check_Count INT,
+    Deposit_Count INT,
+    Loan_Payment_Count INT,
+    Transfer_Count INT,
+    Withdrawal_Count INT
+);
+
+
+
+DELIMITER $$
+
+CREATE PROCEDURE AccountProfileProcedure()
+BEGIN
+    DELETE FROM account_profile;
+
+    INSERT INTO account_profile (Customer_ID, Card_Avg, Check_Avg, Deposit_Avg, Loan_Payment_Avg, Transfer_Avg, Withdrawal_Avg, 
+                                 Card_Count, Check_Count, Deposit_Count, Loan_Payment_Count, Transfer_Count, Withdrawal_Count)
+    SELECT
+        Customer_ID, MAX(Card_Avg), MAX(Check_Avg), MAX(Deposit_Avg), MAX(Loan_Payment_Avg),
+        MAX(Transfer_Avg), MAX(Withdrawal_Avg), MAX(Card_Count), MAX(Check_Count),
+        MAX(Deposit_Count), MAX(Loan_Payment_Count), MAX(Transfer_Count), MAX(Withdrawal_Count)
+    FROM
+        (
+            SELECT
+                Customer_ID,
+                Transaction_Type,
+                AVG(Amount) AS Amount_Avg,
+                COUNT(*) AS Transaction_Count,
+                CASE WHEN Transaction_Type = 'Card' THEN AVG(Amount) END AS Card_Avg,
+                CASE WHEN Transaction_Type = 'Check' THEN AVG(Amount) END AS Check_Avg,
+                CASE WHEN Transaction_Type = 'Deposit' THEN AVG(Amount) END AS Deposit_Avg,
+                CASE WHEN Transaction_Type = 'Loan Payment' THEN AVG(Amount) END AS Loan_Payment_Avg,
+                CASE WHEN Transaction_Type = 'Transfer' THEN AVG(Amount) END AS Transfer_Avg,
+                CASE WHEN Transaction_Type = 'Withdrawal' THEN AVG(Amount) END AS Withdrawal_Avg,
+                CASE WHEN Transaction_Type = 'Card' THEN COUNT(*) END AS Card_Count,
+                CASE WHEN Transaction_Type = 'Check' THEN COUNT(*) END AS Check_Count,
+                CASE WHEN Transaction_Type = 'Deposit' THEN COUNT(*) END AS Deposit_Count,
+                CASE WHEN Transaction_Type = 'Loan Payment' THEN COUNT(*) END AS Loan_Payment_Count,
+                CASE WHEN Transaction_Type = 'Transfer' THEN COUNT(*) END AS Transfer_Count,
+                CASE WHEN Transaction_Type = 'Withdrawal' THEN COUNT(*) END AS Withdrawal_Count
+            FROM
+                transaction_datamart
+            GROUP BY
+                Customer_ID, Transaction_Type
+        ) AS s
+    GROUP BY
+        Customer_ID;
+END$$
+
+DELIMITER ;
+
+
+CALL AccountProfileProcedure();
+
+
+-- Trigger Implementation
+DELIMITER $$
+
+CREATE TRIGGER AfterTransactionInsert
+AFTER INSERT ON transaction_datamart
+FOR EACH ROW
+BEGIN
+    CALL AccountProfileProcedure();
+END$$
+
+DELIMITER ;
+
+-- Check if the trigger works by inserting new value to transaction_datamart
+INSERT INTO transaction_datamart (Customer_ID, Timestamp, Amount, Transaction_Type)
+VALUES (1000,now(), 100.00, 'Card'); 
+
+-- Working but takes alot of time to run - 4.1s
+
+-- Delete the records inserted 
+DELETE FROM transaction_datamart 
+WHERE Customer_ID=1000 AND Amount=100.00 AND Transaction_Type='Card';
+
+-- -------- An advanced version of AccountProfileProcedure-
+
+DELIMITER $$
+
+CREATE PROCEDURE AdvancedAccountProfileProcedure(customerId INT)
+BEGIN
+    -- Variables to hold the computed averages and counts
+    DECLARE v_card_avg DECIMAL(10,2);
+    DECLARE v_check_avg DECIMAL(10,2);
+    DECLARE v_deposit_avg DECIMAL(10,2);
+    DECLARE v_loan_payment_avg DECIMAL(10,2);
+    DECLARE v_transfer_avg DECIMAL(10,2);
+    DECLARE v_withdrawal_avg DECIMAL(10,2);
+    DECLARE v_card_count INT;
+    DECLARE v_check_count INT;
+    DECLARE v_deposit_count INT;
+    DECLARE v_loan_payment_count INT;
+    DECLARE v_transfer_count INT;
+    DECLARE v_withdrawal_count INT;
+
+    -- Calculate the new averages and counts for the specific customer
+    SELECT
+        AVG(CASE WHEN Transaction_Type = 'Card' THEN Amount ELSE NULL END),
+        AVG(CASE WHEN Transaction_Type = 'Check' THEN Amount ELSE NULL END),
+        AVG(CASE WHEN Transaction_Type = 'Deposit' THEN Amount ELSE NULL END),
+        AVG(CASE WHEN Transaction_Type = 'Loan Payment' THEN Amount ELSE NULL END),
+        AVG(CASE WHEN Transaction_Type = 'Transfer' THEN Amount ELSE NULL END),
+        AVG(CASE WHEN Transaction_Type = 'Withdrawal' THEN Amount ELSE NULL END),
+        COUNT(CASE WHEN Transaction_Type = 'Card' THEN 1 ELSE NULL END),
+        COUNT(CASE WHEN Transaction_Type = 'Check' THEN 1 ELSE NULL END),
+        COUNT(CASE WHEN Transaction_Type = 'Deposit' THEN 1 ELSE NULL END),
+        COUNT(CASE WHEN Transaction_Type = 'Loan Payment' THEN 1 ELSE NULL END),
+        COUNT(CASE WHEN Transaction_Type = 'Transfer' THEN 1 ELSE NULL END),
+        COUNT(CASE WHEN Transaction_Type = 'Withdrawal' THEN 1 ELSE NULL END)
+    INTO
+        v_card_avg, v_check_avg, v_deposit_avg, v_loan_payment_avg, v_transfer_avg, v_withdrawal_avg,
+        v_card_count, v_check_count, v_deposit_count, v_loan_payment_count, v_transfer_count, v_withdrawal_count
+    FROM 
+        transaction_datamart
+    WHERE 
+        Customer_ID = customerId;
+
+    -- Update the account_profile for the specific customer
+    UPDATE account_profile
+    SET
+        Card_Avg = v_card_avg,
+        Check_Avg = v_check_avg,
+        Deposit_Avg = v_deposit_avg,
+        Loan_Payment_Avg = v_loan_payment_avg,
+        Transfer_Avg = v_transfer_avg,
+        Withdrawal_Avg = v_withdrawal_avg,
+        Card_Count = v_card_count,
+        Check_Count = v_check_count,
+        Deposit_Count = v_deposit_count,
+        Loan_Payment_Count = v_loan_payment_count,
+        Transfer_Count = v_transfer_count,
+        Withdrawal_Count = v_withdrawal_count
+    WHERE Customer_ID = customerId;
+
+    -- If no row exists for the customer, insert a new row
+    IF ROW_COUNT() = 0 THEN
+        INSERT INTO account_profile (Customer_ID, Card_Avg, Check_Avg, Deposit_Avg, Loan_Payment_Avg, Transfer_Avg, Withdrawal_Avg, 
+                                     Card_Count, Check_Count, Deposit_Count, Loan_Payment_Count, Transfer_Count, Withdrawal_Count)
+        VALUES (customerId, v_card_avg, v_check_avg, v_deposit_avg, v_loan_payment_avg, v_transfer_avg, v_withdrawal_avg,
+                v_card_count, v_check_count, v_deposit_count, v_loan_payment_count, v_transfer_count, v_withdrawal_count);
+    END IF;
+END$$
+
+DELIMITER ;
+
+CALL AdvancedAccountProfileProcedure(1000);
+
+DELIMITER $$
+
+CREATE TRIGGER AdvancedAfterTransactionInsert
+AFTER INSERT ON transaction_datamart
+FOR EACH ROW
+BEGIN
+    -- Call the stored procedure with the Customer_ID of the newly inserted transaction
+    CALL AdvancedAccountProfileProcedure(NEW.Customer_ID);
+END$$
+
+DELIMITER ;
+
+-- Check if the trigger and procedure works by inserting new record
+INSERT INTO transaction_datamart (Customer_ID, Timestamp, Amount, Transaction_Type)
+VALUES (1000,now(), 100.00, 'Card'); 
+
+/* This one is far better than the previous stored procedure
+ as this takes 63ms to run on average */
